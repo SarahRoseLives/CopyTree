@@ -74,7 +74,20 @@ func main() {
 
 	// Print summary
 	fmt.Printf("Copied Dir Tree and %d files to clipboard\n", fileCount)
-	fmt.Printf("Total lines %d Total Characters %d\n", lineCount, charCount)
+	
+	// Color the summary based on size
+	var colorCode string
+	switch {
+	case charCount <= 20000: // Green - should work with any AI
+		colorCode = "\033[32m"
+	case charCount <= 50000: // Yellow - should work with some like DeepSeek or Gemini
+		colorCode = "\033[33m"
+	default: // Red - highly unlikely to work with AI
+		colorCode = "\033[31m"
+	}
+	
+	// Print colored summary (with reset code at the end)
+	fmt.Printf("%sTotal lines %d Total Characters %d\033[0m\n", colorCode, lineCount, charCount)
 }
 
 // Helper function to print a filtered tree
