@@ -49,8 +49,15 @@ func main() {
 		return nil
 	})
 
+	// Build tree for both printing and clipboard
+	tree := buildTree(startDir, fileList)
+
 	// Print tree to stdout
-	printTree(startDir, fileList, exts)
+	printTreeRec(tree, "", true)
+
+	// Add tree string to clipboard buffer
+	buf.WriteString(buildTreeString(tree, "", true))
+	buf.WriteString("\n\n")
 
 	// Copy files to clipboard buffer
 	for _, path := range fileList {
@@ -74,7 +81,7 @@ func main() {
 
 	// Print summary
 	fmt.Printf("Copied Dir Tree and %d files to clipboard\n", fileCount)
-	
+
 	// Color the summary based on size
 	var colorCode string
 	switch {
@@ -85,15 +92,74 @@ func main() {
 	default: // Red - highly unlikely to work with AI
 		colorCode = "\033[31m"
 	}
-	
+
 	// Print colored summary (with reset code at the end)
 	fmt.Printf("%sTotal lines %d Total Characters %d\033[0m\n", colorCode, lineCount, charCount)
 }
 
 // Helper function to print a filtered tree
-func printTree(base string, fileList []string, exts []string) {
-	tree := buildTree(base, fileList)
-	printTreeRec(tree, "", true)
+func printTreeRec(node *TreeNode, prefix string, last bool) {
+	if node.Name != "." {
+		fmt.Printf("%s", prefix)
+		if last {
+			fmt.Print("└── ")
+		} else {
+			fmt.Print("├── ")
+		}
+		fmt.Println(node.Name)
+	}
+	keys := make([]string, 0, len(node.Children))
+	for k := range node.Children {
+		keys = append(keys, k)
+	}
+	sortStrings(keys)
+	for i, k := range keys {
+		child := node.Children[k]
+		isLast := i == len(keys)-1
+		var newPrefix string
+		if node.Name == "." {
+			newPrefix = ""
+		} else if last {
+			newPrefix = prefix + "    "
+		} else {
+			newPrefix = prefix + "│   "
+		}
+		printTreeRec(child, newPrefix, isLast)
+	}
+}
+
+// Helper function to build a filtered tree as a string (for clipboard)
+func buildTreeString(node *TreeNode, prefix string, last bool) string {
+	var out strings.Builder
+	if node.Name != "." {
+		out.WriteString(prefix)
+		if last {
+			out.WriteString("└── ")
+		} else {
+			out.WriteString("├── ")
+		}
+		out.WriteString(node.Name)
+		out.WriteString("\n")
+	}
+	keys := make([]string, 0, len(node.Children))
+	for k := range node.Children {
+		keys = append(keys, k)
+	}
+	sortStrings(keys)
+	for i, k := range keys {
+		child := node.Children[k]
+		isLast := i == len(keys)-1
+		var newPrefix string
+		if node.Name == "." {
+			newPrefix = ""
+		} else if last {
+			newPrefix = prefix + "    "
+		} else {
+			newPrefix = prefix + "│   "
+		}
+		out.WriteString(buildTreeString(child, newPrefix, isLast))
+	}
+	return out.String()
 }
 
 // Converts file list into a tree structure
@@ -121,37 +187,6 @@ func buildTree(base string, files []string) *TreeNode {
 		}
 	}
 	return root
-}
-
-func printTreeRec(node *TreeNode, prefix string, last bool) {
-	if node.Name != "." {
-		fmt.Printf("%s", prefix)
-		if last {
-			fmt.Print("└── ")
-		} else {
-			fmt.Print("├── ")
-		}
-		fmt.Println(node.Name)
-	}
-	keys := make([]string, 0, len(node.Children))
-	for k := range node.Children {
-		keys = append(keys, k)
-	}
-	// Sort keys for consistent output
-	sortStrings(keys)
-	for i, k := range keys {
-		child := node.Children[k]
-		isLast := i == len(keys)-1
-		var newPrefix string
-		if node.Name == "." {
-			newPrefix = ""
-		} else if last {
-			newPrefix = prefix + "    "
-		} else {
-			newPrefix = prefix + "│   "
-		}
-		printTreeRec(child, newPrefix, isLast)
-	}
 }
 
 // Sort strings (for consistent tree output)
