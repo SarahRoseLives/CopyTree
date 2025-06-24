@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io/fs"
@@ -11,17 +12,30 @@ import (
 	"github.com/atotto/clipboard"
 )
 
+const (
+	chatgptSectionSize = 20000 // green output length in characters
+)
+
 func main() {
-	// Get extensions from command line args (without the dot)
-	exts := os.Args[1:]
-	for i, e := range exts {
-		exts[i] = strings.TrimPrefix(strings.ToLower(e), ".")
+	// Handle --chatgpt flag and file extensions
+	var chatgptMode bool
+	extensions := []string{}
+	for _, arg := range os.Args[1:] {
+		if arg == "--chatgpt" {
+			chatgptMode = true
+		} else if strings.HasPrefix(arg, "--") {
+			// ignore unknown flags for now
+			continue
+		} else {
+			extensions = append(extensions, strings.TrimPrefix(strings.ToLower(arg), "."))
+		}
 	}
+
 	startDir, _ := os.Getwd()
 
-	var buf bytes.Buffer
 	var fileList []string
 	var fileCount, lineCount, charCount int
+	var buf bytes.Buffer
 
 	// Walk the directory tree
 	filepath.WalkDir(startDir, func(path string, d fs.DirEntry, err error) error {
@@ -32,10 +46,10 @@ func main() {
 			return nil
 		}
 		// Filter by extension if provided
-		if len(exts) > 0 {
+		if len(extensions) > 0 {
 			ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(d.Name())), ".")
 			found := false
-			for _, e := range exts {
+			for _, e := range extensions {
 				if ext == e {
 					found = true
 					break
@@ -56,7 +70,8 @@ func main() {
 	printTreeRec(tree, "", true)
 
 	// Add tree string to clipboard buffer
-	buf.WriteString(buildTreeString(tree, "", true))
+	treeString := buildTreeString(tree, "", true)
+	buf.WriteString(treeString)
 	buf.WriteString("\n\n")
 
 	// Copy files to clipboard buffer
@@ -76,25 +91,74 @@ func main() {
 		charCount += len(data)
 	}
 
-	// Copy to clipboard
-	clipboard.WriteAll(buf.String())
+	clipboardData := buf.String()
 
-	// Print summary
-	fmt.Printf("Copied Dir Tree and %d files to clipboard\n", fileCount)
-
-	// Color the summary based on size
-	var colorCode string
-	switch {
-	case charCount <= 20000: // Green - should work with any AI
-		colorCode = "\033[32m"
-	case charCount <= 50000: // Yellow - should work with some like DeepSeek or Gemini
-		colorCode = "\033[33m"
-	default: // Red - highly unlikely to work with AI
-		colorCode = "\033[31m"
+	if !chatgptMode {
+		// Normal mode: Copy all at once
+		clipboard.WriteAll(clipboardData)
+		fmt.Printf("Copied Dir Tree and %d files to clipboard\n", fileCount)
+		// Color the summary based on size
+		var colorCode string
+		switch {
+		case charCount <= 20000: // Green - should work with any AI
+			colorCode = "\033[32m"
+		case charCount <= 50000: // Yellow - should work with some like DeepSeek or Gemini
+			colorCode = "\033[33m"
+		default: // Red - highly unlikely to work with AI
+			colorCode = "\033[31m"
+		}
+		fmt.Printf("%sTotal lines %d Total Characters %d\033[0m\n", colorCode, lineCount, charCount)
+		return
 	}
 
-	// Print colored summary (with reset code at the end)
-	fmt.Printf("%sTotal lines %d Total Characters %d\033[0m\n", colorCode, lineCount, charCount)
+	// ChatGPT mode
+	// Section the output into <= 20000 char sections, each split at a boundary if possible
+	sections := splitIntoSections(clipboardData, chatgptSectionSize)
+	// Add prompt to first section
+	chatgptPrompt := `I have a lot of files to show you, I'm going to send you each section separately.
+Tell me when you're ready for the first file.
+Then continue to ask for the next file until we have completed all copying.
+
+`
+	sections[0] = chatgptPrompt + sections[0]
+
+	fmt.Printf("Entering ChatGPT mode: splitting output into %d sections (~%d chars each)\n", len(sections), chatgptSectionSize)
+	fmt.Printf("Copied section 1 of %d to clipboard. Paste into ChatGPT, then press [Enter] for next section.\n", len(sections))
+	clipboard.WriteAll(sections[0])
+
+	reader := bufio.NewReader(os.Stdin)
+	for i := 1; i < len(sections); i++ {
+		fmt.Printf("[Section %d/%d] Press [Enter] to copy next section to clipboard...", i+1, len(sections))
+		reader.ReadString('\n')
+		clipboard.WriteAll(sections[i])
+		fmt.Printf("Section %d copied to clipboard!\n", i+1)
+	}
+	fmt.Printf("All sections copied! (Total files: %d, Total lines: %d, Total Characters: %d)\n", fileCount, lineCount, charCount)
+}
+
+// Helper: splits text into sections not exceeding maxLen, tries to split on file header
+func splitIntoSections(text string, maxLen int) []string {
+	if len(text) <= maxLen {
+		return []string{text}
+	}
+	lines := strings.Split(text, "\n")
+	var sections []string
+	var buf strings.Builder
+	for _, line := range lines {
+		// If adding this line would exceed maxLen, start a new section
+		if buf.Len()+len(line)+1 > maxLen && buf.Len() > 0 {
+			sections = append(sections, buf.String())
+			buf.Reset()
+		}
+		if buf.Len() > 0 {
+			buf.WriteByte('\n')
+		}
+		buf.WriteString(line)
+	}
+	if buf.Len() > 0 {
+		sections = append(sections, buf.String())
+	}
+	return sections
 }
 
 // Helper function to print a filtered tree
